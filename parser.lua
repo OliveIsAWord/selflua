@@ -1,19 +1,25 @@
-local Parser={}
+local Parser = {}
 
 local Die = (require 'die')('parsing')
 local repr = require 'repr'
 
 local function infix_binding_power(op)
-    if op == '-' then
+    if op == '+' or op == '-' then
         return 17, 18
-    elseif op == '*' then
+    elseif op == '*' or op == '/' then
         return 19, 20
+    end
+end
+
+local function prefix_binding_power(op)
+    if op == 'not' or op == '#' or op == '-' or op == '~' then
+        return 21
     end
 end
 
 function Parser.makeParser(tokens_parameter)
     local parser = { i = 1, tokens = tokens_parameter }
-    function parser:skip ()
+    function parser:skip()
         self.i = self.i + 1
     end
 
@@ -36,7 +42,7 @@ function Parser.makeParser(tokens_parameter)
     end
 
     function parser:fatal()
-        Die.fatal(repr(self.tokens[self.i]))
+        Die.fatal('parse error at ' .. repr(self.tokens[self.i]))
     end
 
     function parser:one(f)
@@ -47,7 +53,7 @@ function Parser.makeParser(tokens_parameter)
         return result
     end
 
-    function parser:expr_bp(min_bp)
+    function parser:expr_bp(min_bp, optional)
         local lhs
         if not lhs then
             local number = self:number()
@@ -55,8 +61,26 @@ function Parser.makeParser(tokens_parameter)
                 lhs = { subtype = 'number', value = number.value }
             end
         end
+        if not lhs and self.tokens[self.i] then
+            local op = self.tokens[self.i].value
+            local lbp = prefix_binding_power(op)
+            if lbp then
+                self:skip()
+                local inner = self:expr_bp(lbp)
+                if op == '-' then
+                    op='neg'
+                elseif op == '~' then
+                    op='bitnot'
+                end
+                lhs = { subtype = op, inner = inner }
+            end
+        end
         if not lhs then
-            return nil
+            if optional then
+                return nil
+            else
+                self:fatal()
+            end
         end
         lhs.type = 'expr'
         while true do
@@ -113,14 +137,19 @@ function Parser.parse(tokens)
 end
 
 function Parser.debugString(tree)
-    if tree.type=='expr' then
+    if tree.type == 'expr' then
         if tree.lhs and tree.rhs then
-        return '('.. tree.subtype..' '..Parser.debugString(tree.lhs) .. ' '..Parser.debugString(tree.rhs)..')'
-        else
+            return '(' ..
+            tree.subtype .. ' ' .. Parser.debugString(tree.lhs) .. ' ' .. Parser.debugString(tree.rhs) .. ')'
+        elseif tree.inner then
+            return '(' .. tree.subtype .. ' ' .. Parser.debugString(tree.inner) .. ')'
+        elseif tree.subtype == 'number' then
             return repr(tree.value)
+        else
+            error('cannot syntax tree debug print:\n' .. repr(tree))
         end
     else
-        error('cannot syntax tree debug print:\n'..repr(tree))
+        error('cannot syntax tree debug print:\n' .. repr(tree))
     end
 end
 

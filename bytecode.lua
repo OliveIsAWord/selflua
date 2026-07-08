@@ -1,5 +1,8 @@
 local Bytecode = {}
 
+local Die = (require 'die')('bytecode compilation')
+local repr = require 'repr'
+
 function Bytecode.makeBuilder()
     local Builder = { ops = {} }
 
@@ -11,10 +14,15 @@ function Bytecode.makeBuilder()
         local op
         if expr.subtype == 'number' then
             op = { op = 'push_number', value = expr.value }
+        elseif expr.inner then
+            self:expr(expr.inner)
+            op = { op = expr.subtype }
         elseif expr.lhs and expr.rhs then
             self:expr(expr.lhs)
             self:expr(expr.rhs)
             op = { op = expr.subtype }
+        else
+            Die.fatal('unknown operation ' .. repr(expr))
         end
         self:push(op)
     end

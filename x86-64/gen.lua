@@ -2,30 +2,6 @@ local Codegen = {}
 
 local repr = require "repr"
 
-local stamps = {
-    -- TODO: do the floating point byte conversion ourselves to avoid the memory read
-    push_number = [[
-section .data
-    double_~uid: dq ~value.0
-section .text
-    push qword [double_~uid]
-]],
-    ['-'] = [[
-    fld qword [rsp+8]
-    fld qword [rsp]
-    fsubp st1, st0
-    add rsp, 8
-    fstp qword [rsp]
-]],
-    ['*'] = [[
-    fld qword [rsp+8]
-    fld qword [rsp]
-    fmulp st1, st0
-    add rsp, 8
-    fstp qword [rsp]
-]],
-}
-
 local prelude = [[
 default rel
 extern printf
@@ -33,21 +9,64 @@ extern printf
 section .rodata
     printf_fmt db "%f", 10, 0
 
+section .bss
+data_stack_boundary:
+    resb 16 * 10000
+data_stack:
+
 section .text
 global main
 main:
+    sub rsp, 40 ; cargo cult stack alignment
+    mov rbp, data_stack
+    finit
 ]]
+
 local postlude = [[
 
-    ; we implicitly assume we're 16-byte aligned since we have a single f64 left on the stack
     lea rcx, [printf_fmt]
-    mov rdx, [rsp]
+    mov rdx, [rbp]
     call printf
 
-    add rsp, 8
+    add rsp, 40
     xor eax, eax
     ret
 ]]
+
+local function binop (name)
+    return [[
+    fld qword [rbp+8]
+    fld qword [rbp]
+    f]]..name..[[p st1, st0
+    add rbp, 8
+    fstp qword [rbp]
+]]
+end
+
+local function unop (name)
+    return [[
+    fld qword [rbp]
+    f]]..name..[[; <- load-bearing semicolon
+    fstp qword [rbp]
+]]
+end
+
+local stamps = {
+    -- TODO: do the floating point byte conversion ourselves to avoid the memory read
+    push_number = [[
+section .data
+    double_~uid: dq ~value.0
+section .text
+    mov rdi, qword [double_~uid]
+    sub rbp, 8
+    mov qword [rbp], rdi
+]],
+    ['+'] = binop('add'),
+    ['-'] = binop('sub'),
+    ['*'] = binop('mul'),
+    ['/'] = binop('div'),
+    ['neg'] = unop('chs'),
+}
 
 function Codegen.codegen(bytecode)
     local assembly = prelude
