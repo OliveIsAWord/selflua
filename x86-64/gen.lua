@@ -9,13 +9,16 @@ function Codegen.codegen(bytecode)
     for i, op in ipairs(bytecode) do
         local code
         if op.op == 'push' then
+            -- NOTE: We use big endian here regardless of host endianness, because numeric constants are essentially big endian.
+            local raw_value=string.pack('>d', op.value)
+            local hex_value='0x'
+            for i=1,#raw_value do
+                hex_value=hex_value..string.format('%02x', raw_value:byte(i))
+            end
             code = ([[
-section .data
-    double_~uid: dq ~value.0
-section .text
-    mov rdi, qword [double_~uid]
+    mov rdi, ~hex_value ; ~value
     call op_push
-]]):gsub('~([%a_][%a%d_]*)', { uid = i, value = op.value })
+]]):gsub('~([%a_][%a%d_]*)', { hex_value = hex_value, value = op.value })
         else
             code = '    call op_' .. op.op .. '\n'
         end
