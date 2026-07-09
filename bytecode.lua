@@ -13,7 +13,7 @@ function Bytecode.makeBuilder()
     function Builder:expr(expr)
         local op
         if expr.subtype == 'number' then
-            op = { op = 'push_number', value = expr.value }
+            op = { op = 'push', value = expr.value }
         elseif expr.inner then
             self:expr(expr.inner)
             op = { op = expr.subtype }

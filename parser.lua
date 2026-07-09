@@ -3,19 +3,19 @@ local Parser = {}
 local Die = (require 'die')('parsing')
 local repr = require 'repr'
 
-local function infix_binding_power(op)
-    if op == '+' or op == '-' then
-        return 17, 18
-    elseif op == '*' or op == '/' then
-        return 19, 20
-    end
-end
+local infix_binding_power = {
+    ['+'] = { 17, 18, 'add' },
+    ['-'] = { 17, 18, 'sub' },
+    ['*'] = { 19, 20, 'mul' },
+    ['/'] = { 19, 20, 'div' },
+}
 
-local function prefix_binding_power(op)
-    if op == 'not' or op == '#' or op == '-' or op == '~' then
-        return 21
-    end
-end
+local prefix_binding_power = {
+    -- ['not'] = { 21, 'not' },
+    -- ['#'] = { 21, 'len' },
+    ['-'] = { 21, 'neg' },
+    -- ['~'] = { 21, 'bitnot' },
+}
 
 function Parser.makeParser(tokens_parameter)
     local parser = { i = 1, tokens = tokens_parameter }
@@ -63,16 +63,11 @@ function Parser.makeParser(tokens_parameter)
         end
         if not lhs and self.tokens[self.i] then
             local op = self.tokens[self.i].value
-            local lbp = prefix_binding_power(op)
+            local lbp, name = table.unpack(prefix_binding_power[op] or {})
             if lbp then
                 self:skip()
                 local inner = self:expr_bp(lbp)
-                if op == '-' then
-                    op='neg'
-                elseif op == '~' then
-                    op='bitnot'
-                end
-                lhs = { subtype = op, inner = inner }
+                lhs = { subtype = name, inner = inner }
             end
         end
         if not lhs then
@@ -89,7 +84,7 @@ function Parser.makeParser(tokens_parameter)
                 break
             end
             local op = token.value
-            local lbp, rbp = infix_binding_power(op)
+            local lbp, rbp, name = table.unpack(infix_binding_power[op] or {})
             if lbp then
                 if lbp < min_bp then
                     break
@@ -98,7 +93,7 @@ function Parser.makeParser(tokens_parameter)
                 local rhs = self:expr_bp(rbp)
                 lhs = {
                     type = 'expr',
-                    subtype = op,
+                    subtype = name,
                     lhs = lhs,
                     rhs = rhs,
                 }
@@ -140,7 +135,7 @@ function Parser.debugString(tree)
     if tree.type == 'expr' then
         if tree.lhs and tree.rhs then
             return '(' ..
-            tree.subtype .. ' ' .. Parser.debugString(tree.lhs) .. ' ' .. Parser.debugString(tree.rhs) .. ')'
+                tree.subtype .. ' ' .. Parser.debugString(tree.lhs) .. ' ' .. Parser.debugString(tree.rhs) .. ')'
         elseif tree.inner then
             return '(' .. tree.subtype .. ' ' .. Parser.debugString(tree.inner) .. ')'
         elseif tree.subtype == 'number' then
