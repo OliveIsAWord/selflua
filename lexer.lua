@@ -1,7 +1,20 @@
 local Lexer = {}
 
-local Die = (require 'die')('lexing')
+local Die = require 'die' 'lexing'
 local repr = require 'repr'
+
+local string_escapes = {
+    ['a'] = '\a',
+    ['b'] = '\b',
+    ['f'] = '\f',
+    ['n'] = '\n',
+    ['r'] = '\r',
+    ['t'] = '\t',
+    ['v'] = '\v',
+    ['\\'] = '\\',
+    ['"'] = '"',
+    ['\''] = '\'',
+}
 
 local keywords = { 'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function', 'global', 'goto', 'if',
     'in', 'local', 'nil', 'not', 'or', 'repeat', 'return', 'then', 'true', 'until', 'while' }
@@ -9,62 +22,89 @@ local keywords = { 'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for'
 local punctuation = { '...', '<<', '>>', '//', '==', '~=', '<=', '>=', '::', '..', '+', '-', '*', '/', '%', '^', '#', '&',
     '~', '|', '<', '>', '=', '(', ')', '{', '}', '[', ']', ';', ':', ',', '.' }
 
-local lexers = {
-    -- whitespace
-    { '%s+',           function() return false end },
-    -- long comment
-    { '%-%-%[(=*)%[', function() Die.fatal('todo: long comments') end },
-    -- short comment
-    { '%-%-.-\n',     function() return false end },
-    -- number
-    { '(%d+)(%a*)', function(num, adjacent_letters)
-        if #adjacent_letters > 0 then
-            Die.fatal(adjacent_letters)
-        end
-        return { type = 'number', value = tonumber(num) }
-    end },
-    -- keyword or identifier
-    { '([%a_][%a%d_]*)', function(str)
-        for _, keyword in ipairs(keywords) do
-            if keyword == str then
-                return { type = 'keyword', value = keyword }
-            end
-        end
-        return { type = 'identifier', value = str }
-    end },
-    -- punctuation
-    -- { punctuation_pattern, function(str) return { type = 'punctuation', value = str } end }
-}
-
 function Lexer.lex(source)
     local tokens = {}
     local offset = 1
     while offset <= #source do
-        for _, lexer in ipairs(lexers) do
-            local result = { source:match('^' .. lexer[1] .. '()', offset) }
-            if result[1] then
-                local token, added_offset = (lexer[2])(table.unpack(result))
-                if token then
-                    table.insert(tokens, token)
+        -- skip whitespace
+        local new_offset = source:match('^%s+()', offset)
+        if new_offset then
+            offset = new_offset
+            goto continue
+        end
+        -- skip long comments
+        local equals_count
+        new_offset = source:match('^%-%-%[(=*)%[()', offset) -- pattern syntax makes this look ugly
+        if new_offset then
+            new_offset = source:match('^%]' .. string.rep('=', #equals_count) .. '%]()', new_offset)
+            if not new_offset then
+                Die.fatal('unclosed long comment')
+            end
+            offset = new_offset
+            goto continue
+        end
+        -- skip line comments
+        new_offset = source:match('^%-%-.-\n()', offset) -- note the non-greedy pattern `.-` so we get the first newline
+        if new_offset then
+            offset = new_offset
+            goto continue
+        end
+        -- keyword or identifier
+        local str, new_offset = source:match('^([%a_][%a%d_]*)()', offset)
+        if new_offset then
+            local type = 'identifier'
+            for _, keyword in ipairs(keywords) do
+                if keyword == str then
+                    type = 'keyword'
+                    str = keyword -- i doubt this line really does anything performance-wise
+                    break
                 end
-                if added_offset then
-                    offset = offset + added_offset
+            end
+            table.insert(tokens, { type = type, value = str })
+            offset = new_offset
+            goto continue
+        end
+        -- string
+        if source:match('^["\']', offset) then
+            local is_double = source:sub(offset, offset) == '"'
+            local chars = {}
+            while true do
+                offset = offset + 1
+                local c = source:sub(offset, offset)
+                if c == '"' and is_double then
+                    break
+                elseif c == '\'' and not is_double then
+                    break
+                elseif c == '\\' then
+                    Die.fatal('todo: string escapes')
+                elseif c == '\n' or c == '\r' or c == '' then
+                    Die.fatal('unclosed string literal')
                 else
-                    offset = result[#result]
+                    table.insert(chars, c)
                 end
-                goto next_token
             end
         end
+        -- numerals
+        local num, adjacent_letters, new_offset = source:match('^(%d+)(%a*)()', offset)
+        if new_offset then
+            if #adjacent_letters > 0 then
+                Die.fatal(adjacent_letters)
+            end
+            table.insert(tokens, { type = 'number', value = tonumber(num) })
+            offset = new_offset
+            goto continue
+        end
+        -- punctuation
         for _, p in ipairs(punctuation) do
-            if p == source:sub(offset,offset+#p-1) then
-                local token={type='punctuation',value=p}
+            if p == source:sub(offset, offset + #p - 1) then
+                local token = { type = 'punctuation', value = p }
                 table.insert(tokens, token)
                 offset = offset + #p
-                goto next_token
+                goto continue
             end
         end
         Die.fatal('unknown thingy at ' .. offset .. ': ' .. repr(source:sub(offset)):sub(1, 50))
-        ::next_token::
+        ::continue::
     end
     return tokens
 end
