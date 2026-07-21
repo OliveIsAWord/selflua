@@ -1,68 +1,119 @@
+bits 64
 default rel
 extern printf
+extern ExitProcess
+
+%define TAG_FLOAT 2
+%define TAG_NIL 4
 
 section .rodata
-    printf_fmt db "%f", 10, 0
+    printf_fmt_float: db "%f", 0
+    string_nil: db "nil", 0
+    string_newline: db 10, 0
+    string_error: db "ERROR!", 10, 0
 
 section .bss
 data_stack_boundary:
     resb 16 * 10000
 data_stack:
 
+%macro CCONV_PRELUDE 0
+    push rbp
+    mov rbp, rsp
+    mov rax, rsp
+    and rax, 15
+    sub rsp, rax
+    sub rsp, 32
+%endmacro
+
+%macro CCONV_RETURN 0
+    mov rsp, rbp
+    pop rbp
+    ret
+%endmacro
+
 section .text
 global main
 main:
-    sub rsp, 40 ; cargo cult stack alignment
-    mov rbp, data_stack
+    push rbp
+    mov rbp, rsp
+    sub rsp, 32
+    
+    mov rbx, data_stack
     finit
     call lua_entry
-    lea rcx, [printf_fmt]
-    mov rdx, [rbp]
-    call printf
+    call op_print_value
 
-    add rsp, 40
-    xor eax, eax
+    xor rax, rax
+    mov rsp, rbp
+    pop rbp
     ret
 
 op_push:
-    sub rbp, 8
-    mov qword [rbp], rdi
+    sub rbx, 16
+    mov qword [rbx], rdi
+    mov qword [rbx+8], TAG_FLOAT
     ret
+    
+%macro ARITHMETIC_BINOP 1
+    cmp qword [rbx+24], TAG_FLOAT
+    jne error
+    cmp qword [rbx+8], TAG_FLOAT
+    jne error
+    fld qword [rbx+16]
+    fld qword [rbx]
+    %1 st1, st0
+    add rbx, 16
+    fstp qword [rbx]
+    ; mov qword [rbx+8], TAG_FLOAT ; redundant for now
+    ret
+%endmacro
+
+%macro ARITHMETIC_UNOP 1
+    cmp qword [rbx+8], TAG_FLOAT
+    jne error
+    fld qword [rbx]
+    %1
+    fstp qword [rbx]
+    ret
+%endmacro
 
 op_add:
-    fld qword [rbp+8]
-    fld qword [rbp]
-    faddp st1, st0
-    add rbp, 8
-    fstp qword [rbp]
-    ret
+    ARITHMETIC_BINOP faddp
 
 op_sub:
-    fld qword [rbp+8]
-    fld qword [rbp]
-    fsubp st1, st0
-    add rbp, 8
-    fstp qword [rbp]
-    ret
+    ARITHMETIC_BINOP fsubp
 
 op_mul:
-    fld qword [rbp+8]
-    fld qword [rbp]
-    fmulp st1, st0
-    add rbp, 8
-    fstp qword [rbp]
-    ret
+    ARITHMETIC_BINOP fmulp
 
 op_div:
-    fld qword [rbp+8]
-    fld qword [rbp]
-    fdivp st1, st0
-    add rbp, 8
-    fstp qword [rbp]
-    ret
+    ARITHMETIC_BINOP fdivp
 
 op_neg:
-    fld qword [rbp]
-    fchs
-    fstp qword [rbp]
-    ret
+    ARITHMETIC_UNOP fchs
+
+op_print_value:
+    CCONV_PRELUDE
+    mov al, [rbx+8]
+    cmp al, TAG_FLOAT
+    je print_float
+    ud2
+print_float:
+    lea rcx, qword [printf_fmt_float]
+    mov rdx, qword [rbx]
+    movq xmm1, qword [rbx]
+    call printf
+    jmp print_end
+print_end:
+    add rbx, 16
+    lea rcx, [string_newline]
+    call printf
+    CCONV_RETURN
+
+error:
+    CCONV_PRELUDE
+    lea rcx, qword [string_error]
+    call printf
+    mov eax, 1
+    call ExitProcess
