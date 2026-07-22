@@ -49,10 +49,16 @@ main:
     pop rbp
     ret
 
-op_push:
+op_push_number:
     sub rbx, 16
     mov qword [rbx], rdi
     mov qword [rbx+8], TAG_FLOAT
+    ret
+
+op_push_unit:
+    sub rbx, 16
+    mov qword [rbx], 0xAAAAAAAA
+    mov qword [rbx+8], rdi
     ret
     
 %macro ARITHMETIC_BINOP 1
@@ -98,11 +104,17 @@ op_print_value:
     mov al, [rbx+8]
     cmp al, TAG_FLOAT
     je print_float
+    cmp al, TAG_NIL
+    je print_nil
     ud2
 print_float:
     lea rcx, qword [printf_fmt_float]
     mov rdx, qword [rbx]
     movq xmm1, qword [rbx]
+    call printf
+    jmp print_end
+print_nil:
+    lea rcx, qword [string_nil]
     call printf
     jmp print_end
 print_end:

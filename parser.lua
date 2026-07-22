@@ -59,6 +59,8 @@ function Parser.makeParser(tokens_parameter)
             local number = self:number()
             if number then
                 lhs = { subtype = 'number', value = number.value }
+            elseif self:eat('nil') then
+                lhs = { subtype = 'nil' }
             end
         end
         if not lhs and self.tokens[self.i] then
@@ -140,6 +142,8 @@ function Parser.debugString(tree)
             return '(' .. tree.subtype .. ' ' .. Parser.debugString(tree.inner) .. ')'
         elseif tree.subtype == 'number' then
             return repr(tree.value)
+        elseif tree.subtype == 'nil' then
+            return tree.subtype
         else
             error('cannot syntax tree debug print:\n' .. repr(tree))
         end

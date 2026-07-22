@@ -8,7 +8,9 @@ function Codegen.codegen(bytecode)
     local assembly = prelude .. '\nlua_entry:\n'
     for i, op in ipairs(bytecode) do
         local code
-        if op.op == 'push' then
+        if op.op == 'push_unit' then
+            code = '    mov rdi, TAG_'..op.value:upper()..'\n    call op_push_unit\n'
+        elseif op.op == 'push_number' then
             -- NOTE: We use big endian here regardless of host endianness, because numeric constants are essentially big endian.
             local raw_value=string.pack('>d', op.value)
             local hex_value='0x'
@@ -17,7 +19,7 @@ function Codegen.codegen(bytecode)
             end
             code = ([[
     mov rdi, ~hex_value ; ~value
-    call op_push
+    call op_push_number
 ]]):gsub('~([%a_][%a%d_]*)', { hex_value = hex_value, value = op.value })
         else
             code = '    call op_' .. op.op .. '\n'
