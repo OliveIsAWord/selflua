@@ -2,6 +2,17 @@ local Bytecode = {}
 
 local Die = (require 'die')('bytecode compilation')
 local repr = require 'repr'
+local BetterTypes = require 'better_types'
+
+Bytecode.SimpleOp = BetterTypes.SimpleEnum 'SimpleOp' { 'add', 'sub', 'mul', 'div', 'neg' }
+
+Bytecode.ComplexOp = BetterTypes.Enum 'ComplexOp' {
+    push_number = { 'value' },
+    push_unit = { 'value' },
+
+}
+
+local Simple, Complex = Bytecode.SimpleOp, Bytecode.ComplexOp
 
 function Bytecode.makeBuilder()
     local Builder = { ops = {} }
@@ -12,17 +23,17 @@ function Bytecode.makeBuilder()
 
     function Builder:expr(expr)
         local op
-        if expr.subtype == 'number' then
-            op = { op = 'push_number', value = expr.value }
-        elseif expr.subtype == 'nil' then
-            op = { op = 'push_unit', value = expr.subtype }
-        elseif expr.inner then
+        if expr:is('Number') then
+            op = Complex.push_number {value=expr.value}
+        elseif expr._variant == 'LiteralNil' then
+            op = Complex.push_unit {value='nil'}
+        elseif expr:is('UnOp') then
             self:expr(expr.inner)
-            op = { op = expr.subtype }
-        elseif expr.lhs and expr.rhs then
-            self:expr(expr.lhs)
-            self:expr(expr.rhs)
-            op = { op = expr.subtype }
+            op = Simple[expr.kind]
+        elseif expr:is('BinOp') then
+            self:expr(expr.left)
+            self:expr(expr.right)
+            op = Simple[expr.kind]
         else
             Die.fatal('unknown operation ' .. repr(expr))
         end

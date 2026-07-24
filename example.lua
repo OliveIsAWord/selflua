@@ -1,1 +1,1 @@
-return nil+1
+return 3 * 4 - -1 / 2 + 500

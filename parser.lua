@@ -2,6 +2,15 @@ local Parser = {}
 
 local Die = (require 'die')('parsing')
 local repr = require 'repr'
+local BetterTypes = require 'better_types'
+
+Parser.Expr = BetterTypes.Enum 'Expr' {
+    Number = { 'value' },
+    LiteralNil = {},
+    UnOp = { 'kind', 'inner' },
+    BinOp = { 'kind', 'left', 'right' },
+}
+local Expr = Parser.Expr
 
 local infix_binding_power = {
     ['+'] = { 17, 18, 'add' },
@@ -58,18 +67,18 @@ function Parser.makeParser(tokens_parameter)
         if not lhs then
             local number = self:number()
             if number then
-                lhs = { subtype = 'number', value = number.value }
+                lhs = Expr.Number { value = number.value }
             elseif self:eat('nil') then
-                lhs = { subtype = 'nil' }
+                lhs = Expr.LiteralNil {}
             end
         end
         if not lhs and self.tokens[self.i] then
             local op = self.tokens[self.i].value
-            local lbp, name = table.unpack(prefix_binding_power[op] or {})
+            local lbp, kind = table.unpack(prefix_binding_power[op] or {})
             if lbp then
                 self:skip()
                 local inner = self:expr_bp(lbp)
-                lhs = { subtype = name, inner = inner }
+                lhs = Expr.UnOp { kind = kind, inner = inner }
             end
         end
         if not lhs then
@@ -79,26 +88,20 @@ function Parser.makeParser(tokens_parameter)
                 self:fatal()
             end
         end
-        lhs.type = 'expr'
         while true do
             local token = self.tokens[self.i]
             if not token or token.type ~= 'keyword' and token.type ~= 'punctuation' then
                 break
             end
             local op = token.value
-            local lbp, rbp, name = table.unpack(infix_binding_power[op] or {})
+            local lbp, rbp, kind = table.unpack(infix_binding_power[op] or {})
             if lbp then
                 if lbp < min_bp then
                     break
                 end
                 self:skip()
                 local rhs = self:expr_bp(rbp)
-                lhs = {
-                    type = 'expr',
-                    subtype = name,
-                    lhs = lhs,
-                    rhs = rhs,
-                }
+                lhs = Expr.BinOp { kind = kind, left = lhs, right = rhs }
             end
         end
         return lhs
@@ -134,21 +137,21 @@ function Parser.parse(tokens)
 end
 
 function Parser.debugString(tree)
-    if tree.type == 'expr' then
-        if tree.lhs and tree.rhs then
+    if tree._type == 'Expr' then
+        if tree:is('BinOp') then
             return '(' ..
-                tree.subtype .. ' ' .. Parser.debugString(tree.lhs) .. ' ' .. Parser.debugString(tree.rhs) .. ')'
-        elseif tree.inner then
-            return '(' .. tree.subtype .. ' ' .. Parser.debugString(tree.inner) .. ')'
-        elseif tree.subtype == 'number' then
+                tree.kind .. ' ' .. Parser.debugString(tree.left) .. ' ' .. Parser.debugString(tree.right) .. ')'
+        elseif tree:is('UnOp') then
+            return '(' .. tree.kind .. ' ' .. Parser.debugString(tree.inner) .. ')'
+        elseif tree:is('Number') then
             return repr(tree.value)
-        elseif tree.subtype == 'nil' then
-            return tree.subtype
+        elseif tree:is('LiteralNil') then
+            return 'nil'
         else
-            error('cannot syntax tree debug print:\n' .. repr(tree))
+            error('cannot syntax tree debug print ' .. tree._variant .. repr(tree))
         end
     else
-        error('cannot syntax tree debug print:\n' .. repr(tree))
+        error('cannot syntax tree debug print ' .. tree._type .. repr(tree))
     end
 end
 
