@@ -57,9 +57,39 @@ op_push_number:
 
 op_push_unit:
     sub rbx, 16
-    mov qword [rbx], 0xAAAAAAAA
+    mov qword [rbx], 0x5555_5555
     mov qword [rbx+8], rdi
     ret
+
+%macro BEGIN_FUNCTION 1
+    push rbp
+    mov rbp, rsp
+    sub rsp, %1 * 16
+%endmacro
+
+%macro OP_RET 0
+    mov rsp, rbp
+    pop rbp
+    ret
+%endmacro
+
+%macro OP_GET_LOCAL 1
+    %assign local_offset (%1 * 16 + 16)
+    sub rbx, 16
+    mov rax, qword [rbp-local_offset]    
+    mov qword [rbx], rax
+    mov rax, qword [rbp-local_offset+8]
+    mov qword [rbx+8], rax
+%endmacro
+
+%macro OP_ASSIGN_LOCAL 1
+    %assign local_offset (%1 * 16 + 16)
+    mov rax, qword [rbx]
+    mov qword [rbp-local_offset], rax
+    mov rax, qword [rbx+8]
+    mov qword [rbp-local_offset+8], rax
+    add rbx, 16
+%endmacro
     
 %macro ARITHMETIC_BINOP 1
     cmp qword [rbx+24], TAG_FLOAT

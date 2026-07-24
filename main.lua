@@ -8,7 +8,7 @@
 -- })
 
 local repr = require 'repr'
-local Lexer = require 'lexer'
+local Lexer = require 'Lexer'
 local Parser = require 'parser'
 local Bytecode = require 'bytecode'
 local Codegen = require 'x86-64.gen'
@@ -16,9 +16,9 @@ local Codegen = require 'x86-64.gen'
 local source = io.open('example.lua'):read('a')
 local tokens = Lexer.lex(source)
 local syntax_tree = Parser.parse(tokens)
-print(Parser.debugString(syntax_tree.returns[1]))
-local bytecode=Bytecode.build(syntax_tree)
+print(Parser.debugString(syntax_tree))
+local bytecode = Bytecode.build(syntax_tree)
 print(repr(bytecode))
-local assembly=Codegen.codegen(bytecode)
+local assembly = Codegen.codegen(bytecode)
 print(assembly)
 io.open('out.asm', "w+"):write(assembly)
