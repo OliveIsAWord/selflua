@@ -1,6 +1,6 @@
 local Parser = {}
 
-local Die = (require 'die')('parsing')
+local Die = require 'die' 'parsing'
 local repr = require 'repr'
 local BetterTypes = require 'better_types'
 
@@ -10,6 +10,7 @@ Parser.Expr = BetterTypes.Enum 'Expr' {
     Variable = { 'name' },
     UnOp = { 'kind', 'inner' },
     BinOp = { 'kind', 'left', 'right' },
+    -- Call = { 'callee', 'args' },
 }
 local Expr = Parser.Expr
 

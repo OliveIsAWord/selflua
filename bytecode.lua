@@ -6,14 +6,16 @@ local BetterTypes = require 'better_types'
 
 Bytecode.SimpleOp = BetterTypes.SimpleEnum 'SimpleOp' {
     'add', 'sub', 'mul', 'div', 'neg',
+    'ret',
 }
 
 Bytecode.ComplexOp = BetterTypes.Enum 'ComplexOp' {
-    push_number = { 'value' },
+    push_float = { 'value' },
     push_unit = { 'value' },
     get_local = { 'id' },
     assign_local = { 'id' },
-    ret = {},
+    -- This is just a hack until we actually implement globals.
+    push_builtin = { 'name' },
 }
 
 local Simple, Complex = Bytecode.SimpleOp, Bytecode.ComplexOp
@@ -39,15 +41,22 @@ function Bytecode.makeBuilder()
     function Builder:expr(expr)
         local op
         if expr:is('Number') then
-            op = Complex.push_number { value = expr.value }
+            op = Complex.push_float { value = expr.value }
         elseif expr:is('LiteralNil') then
             op = Complex.push_unit { value = 'nil' }
         elseif expr:is('Variable') then
-            local id = self:get_local(expr.name)
-            if not id then
-                error(expr.name)
-            end
-            op = Complex.get_local { id = id }
+            -- God gives Her most cursed `do` blocks to Her strongest girls.
+            repeat
+                local id = self:get_local(expr.name)
+                if id then
+                    op = Complex.get_local { id = id }
+                    break
+                end
+                if expr.name == 'print' then
+                    op = Complex.push_builtin { name = expr.name }
+                    break
+                end
+            until error('unknown variable ' .. expr.name)
         elseif expr:is('UnOp') then
             self:expr(expr.inner)
             op = Simple[expr.kind]
@@ -72,7 +81,7 @@ function Bytecode.makeBuilder()
             self:push(Complex.assign_local { id = id })
         elseif stmt:is('Return') then
             self:expr(stmt.value)
-            self:push(Complex.ret {})
+            self:push(Simple.ret)
         else
             Die.fatal('unknown statement ' .. repr(stmt))
         end

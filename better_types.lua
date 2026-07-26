@@ -7,11 +7,11 @@ function BetterTypes.Enum(name)
             if ty[variant] then
                 error('duplicate variant ' .. name .. '.' .. variant, 2)
             end
-            local field_set = {}
+            local field_index = {}
             local num_fields = 0
             for _, field in ipairs(all_fields) do
-                field_set[field] = true
                 num_fields = num_fields + 1
+                field_index[field] = num_fields
             end
             local function is(self, key)
                 local variant = self._variant
@@ -19,6 +19,17 @@ function BetterTypes.Enum(name)
                     error('checked ' .. self._type .. '.' .. variant .. ' against unknown variant ' .. key, 2)
                 end
                 return variant == key
+            end
+            local function iter(self, key)
+                local i = 1
+                if key then
+                    i = field_index[key] + 1
+                end
+                local next_key = all_fields[i]
+                if next_key then
+                    return next_key, self[next_key]
+                end
+                -- return nil, nil
             end
             local variant_metatable = {
                 __index = setmetatable({ _type = name, _variant = variant, is = is }, {
@@ -31,12 +42,15 @@ function BetterTypes.Enum(name)
                     error('set unknown field ' .. name .. '.' .. variant .. '.' .. k, 2)
                 end,
                 __name = variant,
+                __pairs = function(t)
+                    return iter, t, nil
+                end
             }
             ty[variant] = function(fields)
                 local value = {}
                 local i = 0
                 for k, v in pairs(fields) do
-                    if not field_set[k] then
+                    if not field_index[k] then
                         error('unknown field ' .. name .. '.' .. variant .. '.' .. k, 2)
                     end
                     value[k] = v
