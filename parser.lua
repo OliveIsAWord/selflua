@@ -121,6 +121,9 @@ function Parser.makeParser(tokens_parameter)
             if lbp then
                 self:skip()
                 local inner = self:expr_bp(lbp)
+                if not inner then
+                    self:fatal()
+                end
                 lhs = Expr.UnOp { kind = kind, inner = inner }
             end
         end
@@ -150,6 +153,9 @@ function Parser.makeParser(tokens_parameter)
             end
             self:skip()
             local rhs = self:expr_bp(rbp)
+            if not rhs then
+                self:fatal()
+            end
             lhs = Expr.BinOp { kind = kind, left = lhs, right = rhs }
             ::continue::
         end
