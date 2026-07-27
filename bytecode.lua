@@ -1,12 +1,12 @@
 local Bytecode = {}
 
-local Die = (require 'die')('bytecode compilation')
+local Die = require 'die' 'bytecode compilation'
 local repr = require 'repr'
 local BetterTypes = require 'better_types'
 
 Bytecode.SimpleOp = BetterTypes.SimpleEnum 'SimpleOp' {
     'add', 'sub', 'mul', 'div', 'neg',
-    'ret',
+    'call', 'ret', 'multi_start', 'multi_end_none', 'multi_end_single', 'multi_end_many',
 }
 
 Bytecode.ComplexOp = BetterTypes.Enum 'ComplexOp' {
@@ -16,6 +16,8 @@ Bytecode.ComplexOp = BetterTypes.Enum 'ComplexOp' {
     assign_local = { 'id' },
     -- This is just a hack until we actually implement globals.
     push_builtin = { 'name' },
+    multi_adjust = { 'count' },
+    multi_end_adjust = { 'count' },
 }
 
 local Simple, Complex = Bytecode.SimpleOp, Bytecode.ComplexOp
@@ -38,7 +40,7 @@ function Bytecode.makeBuilder()
         return self.vars[name]
     end
 
-    function Builder:expr(expr)
+    function Builder:expr(expr, is_multi)
         local op
         if expr:is('Number') then
             op = Complex.push_float { value = expr.value }
@@ -64,6 +66,18 @@ function Bytecode.makeBuilder()
             self:expr(expr.left)
             self:expr(expr.right)
             op = Simple[expr.kind]
+        elseif expr:is('Call') then
+            self:push(Simple.multi_start)
+            self:expr(expr.callee)
+            for i, arg in ipairs(expr.args) do
+                self:expr(arg, i == #expr.args)
+            end
+            self:push(Simple.call)
+            if not is_multi then
+                op = Simple.multi_end_single
+            else
+                op = Simple.multi_end_many
+            end
         else
             Die.fatal('unknown expression ' .. repr(expr))
         end
@@ -72,15 +86,20 @@ function Bytecode.makeBuilder()
 
     function Builder:stmt(stmt)
         if stmt:is('Local') then
-            local id = self:create_local(stmt.name)
-            if stmt.init[1] then
-                self:expr(stmt.init[1])
-            else
-                self:push(Complex.push_unit { value = 'nil' })
+            self:push(Simple.multi_start)
+            for i, init in ipairs(stmt.init_list) do
+                self:expr(init, i == #stmt.init_list)
             end
-            self:push(Complex.assign_local { id = id })
+            self:push(Complex.multi_adjust { count = #stmt.variables })
+            for _, variable in ipairs(stmt.variables) do
+                local id = self:create_local(variable)
+                self:push(Complex.assign_local { id = id })
+            end
+            self:push(Complex.multi_end_adjust { count = #stmt.variables })
         elseif stmt:is('Return') then
-            self:expr(stmt.value)
+            for i, value in ipairs(stmt.values) do
+                self:expr(value, i == #stmt.values)
+            end
             self:push(Simple.ret)
         else
             Die.fatal('unknown statement ' .. repr(stmt))
@@ -98,6 +117,13 @@ function Bytecode.makeBuilder()
         self.vars = outer_scope
     end
 
+    function Builder:chunk(chunk)
+        self:block(chunk)
+        if self.ops[#self.ops] ~= Simple.ret then
+            self:push(Simple.ret)
+        end
+    end
+
     function Builder:finish()
         local bytecode = self.ops
         bytecode.num_locals = self.num_locals
@@ -109,7 +135,7 @@ end
 
 function Bytecode.build(tree)
     local builder = Bytecode.makeBuilder()
-    builder:block(tree)
+    builder:chunk(tree)
     return builder:finish()
 end
 

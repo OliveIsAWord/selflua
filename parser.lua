@@ -10,15 +10,22 @@ Parser.Expr = BetterTypes.Enum 'Expr' {
     Variable = { 'name' },
     UnOp = { 'kind', 'inner' },
     BinOp = { 'kind', 'left', 'right' },
-    -- Call = { 'callee', 'args' },
+    Call = { 'callee', 'args' },
 }
 local Expr = Parser.Expr
 
 Parser.Stmt = BetterTypes.Enum 'Stmt' {
-    Local = { 'name', 'init' },
-    Return = { 'value' },
+    Local = { 'variables', 'init_list' },
+    Return = { 'values' },
 }
 local Stmt = Parser.Stmt
+
+local function is_var(expr)
+    return expr:is('Variable') -- or self:is('Index')
+end
+local function is_prefix(expr)
+    return is_var(expr) or expr:is('Call') -- or self:is('Paren')
+end
 
 local infix_binding_power = {
     ['+'] = { 17, 18, 'add' },
@@ -79,7 +86,20 @@ function Parser.makeParser(tokens_parameter)
         return result
     end
 
-    function parser:expr_bp(min_bp, optional)
+    function parser:list(f)
+        local result = f(self)
+        if not result then
+            return {}
+        end
+        local items = { result }
+        while self:eat(',') do
+            local result = self:one(f)
+            table.insert(items, result)
+        end
+        return items
+    end
+
+    function parser:expr_bp(min_bp)
         local lhs
         if not lhs then
             local number = self:number()
@@ -104,11 +124,7 @@ function Parser.makeParser(tokens_parameter)
             end
         end
         if not lhs then
-            if optional then
-                return nil
-            else
-                self:fatal()
-            end
+            return nil
         end
         while true do
             local token = self.tokens[self.i]
@@ -116,6 +132,17 @@ function Parser.makeParser(tokens_parameter)
                 break
             end
             local op = token.value
+            if is_prefix(lhs) then
+                if op == '(' then
+                    self:skip()
+                    local args = self:list(self.expr)
+                    if not self:eat(')') then
+                        self:fatal()
+                    end
+                    lhs = Expr.Call { callee = lhs, args = args }
+                    goto continue
+                end
+            end
             local lbp, rbp, kind = table.unpack(infix_binding_power[op] or {})
             if not lbp or lbp < min_bp then
                 break
@@ -123,6 +150,7 @@ function Parser.makeParser(tokens_parameter)
             self:skip()
             local rhs = self:expr_bp(rbp)
             lhs = Expr.BinOp { kind = kind, left = lhs, right = rhs }
+            ::continue::
         end
         return lhs
     end
@@ -133,15 +161,15 @@ function Parser.makeParser(tokens_parameter)
 
     function parser:stmt()
         if self:eat('local') then
-            local variable = self:one(self.identifier)
-            local init_expr = {}
+            local variables = self:list(self.identifier)
+            local init_list = {}
             if self:eat('=') then
-                init_expr[#init_expr + 1] = self:one(self.expr)
+                init_list = self:list(self.expr)
             end
-            return Stmt.Local { name = variable, init = init_expr }
+            return Stmt.Local { variables = variables, init_list = init_list }
         elseif self:eat('return') then
-            local value = self:one(self.expr)
-            return Stmt.Return { value = value }
+            local values = self:list(self.expr)
+            return Stmt.Return { values = values }
         else
             return nil
         end
@@ -175,6 +203,17 @@ function Parser.parse(tokens)
 end
 
 function Parser.debugString(tree)
+    local function debugList(items)
+        local formatted = {}
+        for _, item in ipairs(items) do
+            if type(item) == 'string' then
+                table.insert(formatted, item)
+            else
+                table.insert(formatted, Parser.debugString(item))
+            end
+        end
+        return table.concat(formatted, ', ')
+    end
     if tree._type == 'Expr' then
         if tree:is('BinOp') then
             return '(' ..
@@ -187,18 +226,20 @@ function Parser.debugString(tree)
             return 'nil'
         elseif tree:is('Variable') then
             return tree.name
+        elseif tree:is('Call') then
+            return Parser.debugString(tree.callee) .. '(' .. debugList(tree.args) .. ')'
         else
             error('cannot syntax tree debug print expr ' .. tree._variant .. repr(tree))
         end
     elseif tree._type == 'Stmt' then
         if tree:is('Local') then
             local init = ''
-            if tree.init[1] then
-                init = ' = ' .. Parser.debugString(tree.init[1])
+            if #tree.init_list ~= 0 then
+                init = ' = ' .. debugList(tree.init_list)
             end
-            return 'local ' .. tree.name .. init
+            return 'local ' .. debugList(tree.variables) .. init
         elseif tree:is('Return') then
-            return 'return ' .. Parser.debugString(tree.value)
+            return 'return ' .. debugList(tree.values)
         else
             error('cannot syntax tree debug print stmt ' .. tree._variant .. repr(tree))
         end
@@ -209,7 +250,7 @@ function Parser.debugString(tree)
         end
         return '{ ' .. table.concat(formatted, '; ') .. ' }'
     else
-        error('cannot syntax tree debug print ' .. tree._type .. repr(tree))
+        error('cannot syntax tree debug print ' .. (tree._type or '<unknown>') .. repr(tree))
     end
 end
 

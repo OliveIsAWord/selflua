@@ -33,7 +33,7 @@ function Codegen.codegen(bytecode)
         end
         assembly = assembly .. '    ' .. code .. '\n'
     end
-    return assembly .. '\n    ret\n'
+    return assembly
 end
 
 return Codegen

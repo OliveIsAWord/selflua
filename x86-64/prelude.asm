@@ -11,6 +11,7 @@ section .rodata
     printf_fmt_float: db "%f", 0
     printf_fmt_function: db "function %s %p", 0
     string_nil: db "nil", 0
+    string_space: db "/", 10, 0
     string_newline: db 10, 0
     string_error: db "ERROR!", 10, 0
 
@@ -45,7 +46,9 @@ main:
     
     mov rbx, data_stack
     finit
+    call op_multi_start
     call lua_entry
+    add rdi, 16
     call builtin_print
 
     xor rax, rax
@@ -55,12 +58,15 @@ main:
 
 %macro PUSH 2
     sub rbx, 16
+    ; value
     mov qword [rbx], %2
+    ; tag
     mov qword [rbx+8], %1
 %endmacro
 
 %macro OP_PUSH_FLOAT 1
-    PUSH TAG_FLOAT, %1
+    mov rax, %1
+    PUSH TAG_FLOAT, rax
 %endmacro
 
 %macro OP_PUSH_UNIT 1
@@ -83,6 +89,66 @@ op_ret:
     pop rbp
     ret
 
+op_multi_start:
+    pop rax
+    push rdi
+    mov rdi, rbx 
+    jmp rax
+    
+op_call:
+    mov al, [rdi-8]
+    cmp al, TAG_FUNCTION
+    jne error
+    mov rax, [rdi-16]
+    jmp rax 
+    
+%macro OP_MULTI_ADJUST 1
+    mov rcx, %1
+    call op_multi_adjust
+%endmacro
+op_multi_adjust:
+    shl rcx, 4
+    neg rcx
+    add rcx, rdi
+    cmp rcx, rbx
+    jb fill_nils
+    mov rbx, rcx
+    ret
+fill_nils:
+    OP_PUSH_UNIT TAG_NIL
+    cmp rcx, rbx
+    jne fill_nils
+    ret
+    
+%macro OP_MULTI_END_ADJUST 1
+    add rbx, %1 * 16
+    pop rdi
+%endmacro
+
+op_multi_end_none:
+    pop rax
+    mov rbx, rdi
+    pop rdi
+    jmp rax
+
+op_multi_end_single:
+    pop rax
+    cmp rdi, rbx
+    je op_multi_end_single_fill
+    sub rdi, 16
+    mov rbx, rdi
+    pop rdi
+    jmp rax
+op_multi_end_single_fill:
+    OP_PUSH_UNIT TAG_NIL
+    pop rdi
+    jmp rax
+
+op_multi_end_many:
+    pop rax
+    pop rdi
+    jmp rax
+
 %macro OP_GET_LOCAL 1
     %assign local_offset (%1 * 16 + 16)
     sub rbx, 16
@@ -94,11 +160,11 @@ op_ret:
 
 %macro OP_ASSIGN_LOCAL 1
     %assign local_offset (%1 * 16 + 16)
-    mov rax, qword [rbx]
-    mov qword [rbp-local_offset], rax
-    mov rax, qword [rbx+8]
+    sub rdi, 16
+    mov rcx, qword [rdi]
+    mov rax, qword [rdi+8]
+    mov qword [rbp-local_offset], rcx
     mov qword [rbp-local_offset+8], rax
-    add rbx, 16
 %endmacro
 
 %macro ARITHMETIC_BINOP 1
@@ -149,7 +215,20 @@ builtin_%1:
 
 DEFINE_BUILTIN print
     CCONV_PRELUDE
-    mov al, [rbx+8]
+    mov r12, rdi
+    sub r12, 16
+    mov r13, 0
+print_loop:
+    cmp r13, 0
+    je print_no_space
+    lea rcx, qword [string_space]
+    call printf
+print_no_space:
+    mov r13, 1
+    sub r12, 16
+    cmp r12, rbx
+    jb print_end
+    mov al, [r12+8]
     cmp al, TAG_FLOAT
     je print_float
     cmp al, TAG_NIL
@@ -159,31 +238,30 @@ DEFINE_BUILTIN print
     ud2
 print_float:
     lea rcx, qword [printf_fmt_float]
-    mov rdx, qword [rbx]
-    movq xmm1, qword [rbx]
+    mov rdx, qword [r12]
+    movq xmm1, qword [r12]
     call printf
-    jmp print_end
+    jmp print_loop
 print_nil:
     lea rcx, qword [string_nil]
     call printf
-    jmp print_end
+    jmp print_loop
 print_function:
     lea rcx, qword [printf_fmt_function]
     ; function <name> <address>
     ; A pointer to the name string is stored right behind the function.
-    mov r8, qword [rbx]
+    mov r8, qword [r12]
     mov qword [scratch], r8
     movq xmm2, qword [scratch]
     mov rdx, qword [r8-8]
     mov qword [scratch], rdx
     movq xmm1, qword [scratch]
     call printf
-    jmp print_end
+    jmp print_loop
 print_end:
-    add rbx, 16
+    mov rbx, rdi
     lea rcx, [string_newline]
     call printf
-    OP_PUSH_UNIT TAG_NIL
     CCONV_RETURN
 
 error:
