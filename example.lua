@@ -1,3 +1,3 @@
-local a, b = 1, 2
-a, b = b, a
-return a, b, a
+local a, b
+a, b = 1, 2, 3, 4, 5
+return 6, a, b

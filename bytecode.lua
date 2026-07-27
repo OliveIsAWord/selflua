@@ -113,16 +113,20 @@ function Bytecode.makeBuilder()
             self:push(Simple.multi_start)
             local ids = {}
             for _, variable in ipairs(stmt.variables) do
-                local id = self:get_local(variable)
+                local id = self:get_local(variable.name)
+                if not id then
+                    error('unknown variable ' .. variable.name)
+                end
                 table.insert(ids, id)
             end
             for i, value in ipairs(stmt.values) do
                 self:expr(value, i == #stmt.values)
             end
+            self:push(Complex.multi_adjust { count = #stmt.variables })
             for _, id in ipairs(ids) do
                 self:push(Complex.assign_local { id = id })
             end
-            self:push(Simple.multi_end_none)
+            self:push(Complex.multi_end_adjust { count = #stmt.variables })
         else
             Die.fatal('unknown statement ' .. repr(stmt))
         end
