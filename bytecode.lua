@@ -109,6 +109,20 @@ function Bytecode.makeBuilder()
             end
             self:push(Simple.call)
             self:push(Simple.multi_end_none)
+        elseif stmt:is('Assign') then
+            self:push(Simple.multi_start)
+            local ids = {}
+            for _, variable in ipairs(stmt.variables) do
+                local id = self:get_local(variable)
+                table.insert(ids, id)
+            end
+            for i, value in ipairs(stmt.values) do
+                self:expr(value, i == #stmt.values)
+            end
+            for _, id in ipairs(ids) do
+                self:push(Complex.assign_local { id = id })
+            end
+            self:push(Simple.multi_end_none)
         else
             Die.fatal('unknown statement ' .. repr(stmt))
         end
