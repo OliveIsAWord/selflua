@@ -101,6 +101,14 @@ function Bytecode.makeBuilder()
                 self:expr(value, i == #stmt.values)
             end
             self:push(Simple.ret)
+        elseif stmt:is('Call') then
+            self:push(Simple.multi_start)
+            self:expr(stmt.callee)
+            for i, arg in ipairs(stmt.args) do
+                self:expr(arg, i == #stmt.args)
+            end
+            self:push(Simple.call)
+            self:push(Simple.multi_end_none)
         else
             Die.fatal('unknown statement ' .. repr(stmt))
         end

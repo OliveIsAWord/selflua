@@ -17,6 +17,7 @@ local Expr = Parser.Expr
 Parser.Stmt = BetterTypes.Enum 'Stmt' {
     Local = { 'variables', 'init_list' },
     Return = { 'values' },
+    Call = { 'callee', 'args' },
 }
 local Stmt = Parser.Stmt
 
@@ -171,6 +172,12 @@ function Parser.makeParser(tokens_parameter)
             local values = self:list(self.expr)
             return Stmt.Return { values = values }
         else
+            local saved = self.i
+            local call = self:expr()
+            if call and call:is('Call') then
+                return Stmt.Call(call)
+            end
+            self.i = saved
             return nil
         end
     end
@@ -240,6 +247,8 @@ function Parser.debugString(tree)
             return 'local ' .. debugList(tree.variables) .. init
         elseif tree:is('Return') then
             return 'return ' .. debugList(tree.values)
+        elseif tree:is('Call') then
+            return Parser.debugString(Expr.Call(tree))
         else
             error('cannot syntax tree debug print stmt ' .. tree._variant .. repr(tree))
         end
