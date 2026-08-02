@@ -22,6 +22,8 @@ data_stack:
 
 scratch: resb 8
 
+section .text
+
 %macro CCONV_PRELUDE 0
     push rbp
     mov rbp, rsp
@@ -37,25 +39,6 @@ scratch: resb 8
     ret
 %endmacro
 
-section .text
-global main
-main:
-    push rbp
-    mov rbp, rsp
-    sub rsp, 32
-    
-    mov rbx, data_stack
-    finit
-    call op_multi_start
-    call lua_entry
-    add rdi, 16
-    call builtin_print
-
-    xor rax, rax
-    mov rsp, rbp
-    pop rbp
-    ret
-
 %macro PUSH 2
     sub rbx, 16
     ; value
@@ -69,8 +52,13 @@ main:
     PUSH TAG_FLOAT, rax
 %endmacro
 
+%macro OP_PUSH_FUNCTION 1
+    lea rax, chunk_%1
+    PUSH TAG_FUNCTION, rax
+%endmacro
+
 %macro OP_PUSH_UNIT 1
-    PUSH %1, 0x5555_5555
+    PUSH TAG_%1, 0x5555_5555
 %endmacro
 
 %macro OP_PUSH_BUILTIN 1
@@ -78,11 +66,19 @@ main:
     PUSH TAG_FUNCTION, rax
 %endmacro
 
-%macro BEGIN_FUNCTION 1
+%macro OP_BEGIN_FUNCTION 2 ; (num_parameters, num_locals)
     push rbp
     mov rbp, rsp
-    sub rsp, %1 * 16
+    sub rsp, %2 * 16
+    mov r8, rdi
+    sub rdi, 16
+    OP_MULTI_ADJUST %1
 %endmacro
+
+op_begin_function_body:
+    mov rdi, r8
+    mov rbx, r8
+    ret
 
 op_ret:
     mov rsp, rbp
@@ -115,7 +111,7 @@ op_multi_adjust:
     mov rbx, rcx
     ret
 fill_nils:
-    OP_PUSH_UNIT TAG_NIL
+    OP_PUSH_UNIT NIL
     cmp rcx, rbx
     jne fill_nils
     ret
@@ -140,7 +136,7 @@ op_multi_end_single:
     pop rdi
     jmp rax
 op_multi_end_single_fill:
-    OP_PUSH_UNIT TAG_NIL
+    OP_PUSH_UNIT NIL
     pop rdi
     jmp rax
 
@@ -270,3 +266,29 @@ error:
     call printf
     mov eax, 1
     call ExitProcess
+
+global main
+extern exit
+main:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 32
+    
+    mov rbx, data_stack
+    finit
+    ; execute the main chunk and print its return values
+    call op_multi_start
+    OP_PUSH_BUILTIN print
+    call op_multi_start
+    OP_PUSH_FUNCTION 1
+    call op_call
+    ; CCONV_PRELUDE
+    ; xor rax, rax
+    ; call exit
+    call op_multi_end_many
+    call op_call
+
+    xor rax, rax
+    mov rsp, rbp
+    pop rbp
+    ret

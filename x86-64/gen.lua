@@ -4,13 +4,13 @@ local repr = require "repr"
 
 local prelude = io.open('x86-64/prelude.asm'):read('a')
 
-function Codegen.codegen(bytecode)
+function Codegen.codegen_chunk(chunk)
     local function complex_op(op, args)
         local arg_string = table.concat(args, ', ')
         return 'OP_' .. op._variant:upper() .. ' ' .. arg_string
     end
-    local assembly = prelude .. '\nlua_entry:\n    BEGIN_FUNCTION ' .. bytecode.num_locals .. '\n'
-    for _, op in ipairs(bytecode) do
+    local assembly = ''
+    for _, op in ipairs(chunk) do
         local code
         if type(op) == 'string' then
             code = 'call op_' .. op
@@ -34,6 +34,15 @@ function Codegen.codegen(bytecode)
         assembly = assembly .. '    ' .. code .. '\n'
     end
     return assembly
+end
+
+function Codegen.codegen(bytecode)
+    local chunks = {}
+    for i, chunk in ipairs(bytecode) do
+        table.insert(chunks, 'chunk_' .. i .. ':')
+        table.insert(chunks, Codegen.codegen_chunk(chunk))
+    end
+    return prelude .. '\n' .. table.concat(chunks, '\n')
 end
 
 return Codegen

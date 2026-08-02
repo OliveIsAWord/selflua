@@ -11,6 +11,7 @@ Parser.Expr = BetterTypes.Enum 'Expr' {
     UnOp = { 'kind', 'inner' },
     BinOp = { 'kind', 'left', 'right' },
     Call = { 'callee', 'args' },
+    Function = { 'parameters', 'body' }
 }
 local Expr = Parser.Expr
 
@@ -18,7 +19,7 @@ Parser.Stmt = BetterTypes.Enum 'Stmt' {
     Local = { 'variables', 'init_list' },
     Return = { 'values' },
     Call = { 'callee', 'args' },
-    Assign = {'variables', 'values'}
+    Assign = { 'variables', 'values' }
 }
 local Stmt = Parser.Stmt
 
@@ -56,6 +57,12 @@ function Parser.makeParser(tokens_parameter)
             return token
         end
         return nil
+    end
+
+    function parser:expect(literal)
+        if not self:eat(literal) then
+            self:fatal()
+        end
     end
 
     function parser:number()
@@ -109,6 +116,8 @@ function Parser.makeParser(tokens_parameter)
                 lhs = Expr.Number { value = number.value }
             elseif self:eat('nil') then
                 lhs = Expr.LiteralNil {}
+            elseif self:eat('function') then
+                lhs = self:funcbody()
             else
                 local name = self:identifier()
                 if name then
@@ -217,6 +226,15 @@ function Parser.makeParser(tokens_parameter)
         return block
     end
 
+    function parser:funcbody()
+        self:expect('(')
+        local parameters = self:list(self.identifier)
+        self:expect(')')
+        local body = self:block()
+        self:expect('end')
+        return Expr.Function { parameters = parameters, body = body }
+    end
+
     function parser:program()
         local block = self:block()
         if self.i ~= #self.tokens + 1 then
@@ -258,6 +276,8 @@ function Parser.debugString(tree)
             return tree.name
         elseif tree:is('Call') then
             return Parser.debugString(tree.callee) .. '(' .. debugList(tree.args) .. ')'
+        elseif tree:is('Function') then
+            return 'function ('.. debugList(tree.parameters)..') '.. Parser.debugString(tree.body)
         else
             error('cannot syntax tree debug print expr ' .. tree._variant .. repr(tree))
         end
