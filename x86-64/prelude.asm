@@ -1,3 +1,9 @@
+; Register Mapping:
+; rax - scratch register, clobbered by ops
+; rbx - data stack pointer
+; rcx - data stack base pointer (points to function object followed by arguments and locals), clobbered by calls
+; rdx - ?
+
 bits 64
 default rel
 extern printf
@@ -66,101 +72,60 @@ section .text
     PUSH TAG_FUNCTION, rax
 %endmacro
 
-%macro OP_BEGIN_FUNCTION 2 ; (num_parameters, num_locals)
-    push rbp
-    mov rbp, rsp
-    sub rsp, %2 * 16
-    mov r8, rdi
-    sub rdi, 16
-    OP_MULTI_ADJUST %1
-%endmacro
-
-op_begin_function_body:
-    mov rdi, r8
-    mov rbx, r8
-    ret
-
 op_ret:
-    mov rsp, rbp
-    pop rbp
+    pop rax
     ret
 
-op_multi_start:
+op_save_stack_pointer:
     pop rax
-    push rdi
-    mov rdi, rbx 
+    push rbx
     jmp rax
     
-op_call:
-    mov al, [rdi-8]
-    cmp al, TAG_FUNCTION
-    jne error
-    mov rax, [rdi-16]
-    jmp rax 
-    
 %macro OP_MULTI_ADJUST 1
-    mov rcx, %1
+    mov rax, %1
     call op_multi_adjust
 %endmacro
 op_multi_adjust:
-    shl rcx, 4
-    neg rcx
-    add rcx, rdi
-    cmp rcx, rbx
+    pop r11
+    pop r8
+    push r11
+    shl rax, 4
+    neg rax
+    add rax, r8
+    cmp rax, rbx
     jb fill_nils
-    mov rbx, rcx
+    mov rbx, rax
     ret
 fill_nils:
     OP_PUSH_UNIT NIL
-    cmp rcx, rbx
+    cmp rax, rbx
     jne fill_nils
     ret
     
-%macro OP_MULTI_END_ADJUST 1
-    add rbx, %1 * 16
-    pop rdi
-%endmacro
-
-op_multi_end_none:
-    pop rax
-    mov rbx, rdi
-    pop rdi
-    jmp rax
-
-op_multi_end_single:
-    pop rax
-    cmp rdi, rbx
-    je op_multi_end_single_fill
-    sub rdi, 16
-    mov rbx, rdi
-    pop rdi
-    jmp rax
-op_multi_end_single_fill:
-    OP_PUSH_UNIT NIL
-    pop rdi
-    jmp rax
-
-op_multi_end_many:
-    pop rax
-    pop rdi
-    jmp rax
-
 %macro OP_GET_LOCAL 1
-    %assign local_offset (%1 * 16 + 16)
+    mov rax, %1
+    add rax, 1
+    shl rax, 4
+    neg rax
+    add rax, rcx
     sub rbx, 16
-    mov rax, qword [rbp-local_offset]    
-    mov qword [rbx], rax
-    mov rax, qword [rbp-local_offset+8]
-    mov qword [rbx+8], rax
+    mov r8, qword [rax]
+    mov qword [rbx], r8
+    mov r8, qword [rax+8]
+    mov qword [rbx+8], r8
 %endmacro
 
 %macro OP_ASSIGN_LOCAL 1
-    %assign local_offset (%1 * 16 + 16)
-    sub rdi, 16
-    mov rcx, qword [rdi]
-    mov rax, qword [rdi+8]
-    mov qword [rbp-local_offset], rcx
-    mov qword [rbp-local_offset+8], rax
+    mov rax, %1
+    add rax, 1
+    shl rax, 4
+    neg rax
+    add rax, rcx
+    mov r8, qword [rbx]
+    mov qword [rax], r8
+    mov r8, qword [rbx+8]
+    mov qword [rax+8], r8
+    add rbx, 16
 %endmacro
 
 %macro ARITHMETIC_BINOP 1
@@ -211,8 +176,8 @@ builtin_%1:
 
 DEFINE_BUILTIN print
     CCONV_PRELUDE
-    mov r12, rdi
-    sub r12, 16
+    mov r12, rcx
+    ; sub r12, 16
     mov r13, 0
 print_loop:
     cmp r13, 0
@@ -275,19 +240,17 @@ main:
     sub rsp, 32
     
     mov rbx, data_stack
+    mov rcx, rbx
+    OP_PUSH_BUILTIN print
+    OP_PUSH_BUILTIN print
+    OP_PUSH_BUILTIN print
     finit
     ; execute the main chunk and print its return values
-    call op_multi_start
-    OP_PUSH_BUILTIN print
-    call op_multi_start
-    OP_PUSH_FUNCTION 1
-    call op_call
-    ; CCONV_PRELUDE
-    ; xor rax, rax
-    ; call exit
-    call op_multi_end_many
-    call op_call
-
+    push rcx
+    mov rcx, rbx
+    call chunk_1
+    pop rcx
+    call builtin_print
     xor rax, rax
     mov rsp, rbp
     pop rbp

@@ -11,6 +11,12 @@ local function makeDie(stage)
         os.exit(false)
     end
 
+    function Die.todo(message)
+        -- error({ stage = stage, message = message }, 2)
+        print('todo:', message)
+        os.exit(false)
+    end
+
     function Die.catch(f)
         local status, error=pcall(f)
         if not status then
