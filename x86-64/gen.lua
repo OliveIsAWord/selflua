@@ -39,7 +39,7 @@ end
 function Codegen.codegen(bytecode)
     local chunks = {}
     for i, chunk in ipairs(bytecode) do
-        table.insert(chunks, 'chunk_' .. i .. ':')
+        table.insert(chunks, 'DEFINE_CHUNK ' .. i .. ', Michael' .. i)
         table.insert(chunks, Codegen.codegen_chunk(chunk))
     end
     return prelude .. '\n' .. table.concat(chunks, '\n')

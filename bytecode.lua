@@ -6,17 +6,18 @@ local BetterTypes = require 'better_types'
 
 Bytecode.SimpleOp = BetterTypes.SimpleEnum 'SimpleOp' {
     'add', 'sub', 'mul', 'div', 'neg',
-    'save_stack_pointer', 'ret',
+    'save_stack_pointer', 'call', 'ret', 'call_end_none', 'call_end_single', 'call_end_many',
 }
 
 Bytecode.ComplexOp = BetterTypes.Enum 'ComplexOp' {
     push_float = { 'value' },
     push_unit = { 'value' },
-    -- push_function = { 'id' },
+    push_function = { 'id' },
     -- This is just a hack until we actually implement globals.
     push_builtin = { 'name' },
     get_local = { 'id' },
     assign_local = { 'id' },
+    begin_function = { 'num_parameters' },
     multi_adjust = { 'count' },
 }
 
@@ -67,20 +68,18 @@ function Bytecode.makeBuilder()
             self:expr(expr.right)
             op = Simple[expr.kind]
         elseif expr:is('Call') then
-            Die.todo('call')
-            self:push(Simple.multi_start)
+            self:push(Simple.save_stack_pointer)
             self:expr(expr.callee)
             for i, arg in ipairs(expr.args) do
                 self:expr(arg, i == #expr.args)
             end
             self:push(Simple.call)
             if not is_multi then
-                op = Simple.multi_end_single
+                op = Simple.call_end_single
             else
-                op = Simple.multi_end_many
+                op = Simple.call_end_many
             end
         elseif expr:is('Function') then
-            Die.todo('function')
             local chunk_id = self:chunk(expr.body, expr.parameters)
             op = Complex.push_function { id = chunk_id }
         else
@@ -101,19 +100,19 @@ function Bytecode.makeBuilder()
                 self:push(Complex.assign_local { id = id })
             end
         elseif stmt:is('Return') then
+            self:push(Simple.save_stack_pointer)
             for i, value in ipairs(stmt.values) do
                 self:expr(value, i == #stmt.values)
             end
             self:push(Simple.ret)
         elseif stmt:is('Call') then
-            Die.todo('call')
-            self:push(Simple.multi_start)
+            self:push(Simple.save_stack_pointer)
             self:expr(stmt.callee)
             for i, arg in ipairs(stmt.args) do
                 self:expr(arg, i == #stmt.args)
             end
             self:push(Simple.call)
-            self:push(Simple.multi_end_none)
+            self:push(Simple.call_end_none)
         elseif stmt:is('Assign') then
             self:push(Simple.save_stack_pointer)
             for i, init in ipairs(stmt.values) do
@@ -146,19 +145,23 @@ function Bytecode.makeBuilder()
         self.ops, self.locals, self.num_locals = {}, {}, 0
         local chunk_id = #self.chunks + 1
         self.chunks[chunk_id] = self.ops
+        -- adjust parameter list
+        self:push(Complex.begin_function { num_parameters = #parameters })
+        for _, parameter in ipairs(parameters) do
+            self:create_local(parameter)
+        end
+        -- allocate space for local variables
         self:push(Simple.save_stack_pointer)
         local allocate_locals = Complex.multi_adjust { count = -1 }
         self:push(allocate_locals)
-        for _, parameter in ipairs(parameters) do
-            Die.todo('parameters')
-            local id = self:create_local(parameter)
-            self:push(Complex.assign_local { id = id })
-        end
         self:block(chunk)
+        -- if the last instruction doesn't diverge, add an empty return statement
+        -- nothing bad would happen if we were to always emit this, it's just cleaner
         if self.ops[#self.ops] ~= Simple.ret then
+            self:push(Simple.save_stack_pointer)
             self:push(Simple.ret)
         end
-        allocate_locals.count = self.num_locals
+        allocate_locals.count = self.num_locals - #parameters
         self.ops, self.locals, self.num_locals = ops, locals, num_locals
         return chunk_id
     end

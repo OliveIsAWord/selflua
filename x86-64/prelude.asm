@@ -72,15 +72,64 @@ section .text
     PUSH TAG_FUNCTION, rax
 %endmacro
 
-op_ret:
-    pop rax
-    ret
-
 op_save_stack_pointer:
     pop rax
     push rbx
     jmp rax
+
+op_call:
+    pop r11
+    pop rax
+    push rcx
+    mov rcx, rax
+    push r11
+    cmp qword [rcx-8], TAG_FUNCTION
+    jne error
+    jmp qword [rcx-16]
     
+%macro OP_BEGIN_FUNCTION 1
+    mov rax, %1 + 1
+    mov r8, rcx
+    call raw_multi_adjust
+%endmacro
+
+op_ret:
+    pop rax
+    pop rax
+    mov r8, rcx
+ret_loop:
+    cmp rax, rbx
+    je ret_loop_end
+    sub rax, 16
+    sub r8, 16
+    mov r9, qword [rax]
+    mov qword [r8], r9
+    mov r9, qword [rax+8]
+    mov qword [r8+8], r9
+    jmp ret_loop
+ret_loop_end:
+    mov rbx, r8
+    ret
+    
+op_call_end_many:
+    pop r11
+    pop rcx
+    jmp r11
+
+op_call_end_none:
+    pop r11
+    mov rbx, rcx
+    pop rcx
+    jmp r11
+
+op_call_end_single:
+    pop r11
+    mov rax, 1
+    mov r8, rcx
+    pop rcx
+    push r11
+    jmp raw_multi_adjust
+
 %macro OP_MULTI_ADJUST 1
     mov rax, %1
     call op_multi_adjust
@@ -89,6 +138,7 @@ op_multi_adjust:
     pop r11
     pop r8
     push r11
+raw_multi_adjust:
     shl rax, 4
     neg rax
     add rax, r8
@@ -104,7 +154,7 @@ fill_nils:
     
 %macro OP_GET_LOCAL 1
     mov rax, %1
-    add rax, 1
+    add rax, 2
     shl rax, 4
     neg rax
     add rax, rcx
@@ -117,7 +167,7 @@ fill_nils:
 
 %macro OP_ASSIGN_LOCAL 1
     mov rax, %1
-    add rax, 1
+    add rax, 2
     shl rax, 4
     neg rax
     add rax, rcx
@@ -172,6 +222,14 @@ section .rodata
 section .text
     dq builtin_name_%1
 builtin_%1:
+%endmacro
+
+%macro DEFINE_CHUNK 2
+section .rodata
+    chunk_name_%1: db %str(%2), 0
+section .text
+    dq chunk_name_%1
+chunk_%1:
 %endmacro
 
 DEFINE_BUILTIN print
@@ -248,6 +306,7 @@ main:
     ; execute the main chunk and print its return values
     push rcx
     mov rcx, rbx
+    OP_PUSH_FUNCTION 1
     call chunk_1
     pop rcx
     call builtin_print
