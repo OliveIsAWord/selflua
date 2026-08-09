@@ -5,8 +5,9 @@ local repr = require 'repr'
 local BetterTypes = require 'better_types'
 
 Bytecode.SimpleOp = BetterTypes.SimpleEnum 'SimpleOp' {
+    'pop',
     'add', 'sub', 'mul', 'div', 'neg',
-    'save_stack_pointer', 'call', 'ret', 'call_end_none', 'call_end_single', 'call_end_many',
+    'save_stack_pointer', 'call', 'ret', 'call_end_many',
 }
 
 Bytecode.ComplexOp = BetterTypes.Enum 'ComplexOp' {
@@ -18,7 +19,8 @@ Bytecode.ComplexOp = BetterTypes.Enum 'ComplexOp' {
     get_local = { 'id' },
     assign_local = { 'id' },
     begin_function = { 'num_parameters' },
-    multi_adjust = { 'count' },
+    allocate_locals = { 'count' },
+    call_end_adjust = { 'count' },
 }
 
 local Simple, Complex = Bytecode.SimpleOp, Bytecode.ComplexOp
@@ -41,7 +43,8 @@ function Bytecode.makeBuilder()
         return self.locals[name]
     end
 
-    function Builder:expr(expr, is_multi)
+    function Builder:expr(expr, adjust_to)
+        adjust_to = adjust_to or 1
         local op
         if expr:is('Number') then
             op = Complex.push_float { value = expr.value }
@@ -71,13 +74,13 @@ function Bytecode.makeBuilder()
             self:push(Simple.save_stack_pointer)
             self:expr(expr.callee)
             for i, arg in ipairs(expr.args) do
-                self:expr(arg, i == #expr.args)
+                self:expr(arg, i == #expr.args and 'many')
             end
             self:push(Simple.call)
-            if not is_multi then
-                op = Simple.call_end_single
+            if adjust_to == 'many' then
+                op = Complex.call_end_many
             else
-                op = Simple.call_end_many
+                op = Complex.call_end_adjust { count = adjust_to }
             end
         elseif expr:is('Function') then
             local chunk_id = self:chunk(expr.body, expr.parameters)
@@ -86,39 +89,63 @@ function Bytecode.makeBuilder()
             Die.fatal('unknown expression ' .. repr(expr))
         end
         self:push(op)
+        if not expr:is('Call') and adjust_to ~= 'many' then
+            if adjust_to == 0 then
+                self:push(Simple.pop)
+            else
+                assert(adjust_to > 0)
+                for _ = 2, adjust_to do
+                    self:push(Complex.push_unit { value = 'nil' })
+                end
+            end
+        end
+    end
+
+    function Builder:expr_list(expr_list, values_needed)
+        if #expr_list == 0 then
+            for _ = 1, values_needed do
+                self:push(Complex.push_unit { value = 'nil' })
+            end
+        else
+            for i, init in ipairs(expr_list) do
+                if i == #expr_list then
+                    self:expr(init, math.max(0, values_needed))
+                elseif values_needed == 0 then
+                    self:expr(init, 0)
+                else
+                    self:expr(init)
+                    values_needed = values_needed - 1
+                end
+            end
+        end
     end
 
     function Builder:stmt(stmt)
         if stmt:is('Local') then
-            self:push(Simple.save_stack_pointer)
-            for i, init in ipairs(stmt.init_list) do
-                self:expr(init, i == #stmt.init_list)
+            self:expr_list(stmt.init_list, #stmt.variables)
+            local ids = {}
+            for i, v in ipairs(stmt.variables) do
+                ids[i] = self:create_local(v)
             end
-            self:push(Complex.multi_adjust { count = #stmt.variables })
             for i = #stmt.variables, 1, -1 do
-                local id = self:create_local(stmt.variables[i])
-                self:push(Complex.assign_local { id = id })
+                self:push(Complex.assign_local { id = ids[i] })
             end
         elseif stmt:is('Return') then
             self:push(Simple.save_stack_pointer)
             for i, value in ipairs(stmt.values) do
-                self:expr(value, i == #stmt.values)
+                self:expr(value, i == #stmt.values and 'many')
             end
             self:push(Simple.ret)
         elseif stmt:is('Call') then
             self:push(Simple.save_stack_pointer)
             self:expr(stmt.callee)
             for i, arg in ipairs(stmt.args) do
-                self:expr(arg, i == #stmt.args)
+                self:expr(arg, i == #stmt.args and 'many')
             end
             self:push(Simple.call)
-            self:push(Simple.call_end_none)
+            self:push(Complex.call_end_adjust { count = 0 })
         elseif stmt:is('Assign') then
-            self:push(Simple.save_stack_pointer)
-            for i, init in ipairs(stmt.values) do
-                self:expr(init, i == #stmt.values)
-            end
-            self:push(Complex.multi_adjust { count = #stmt.variables })
+            self:expr_list(stmt.values, #stmt.variables)
             for i = #stmt.variables, 1, -1 do
                 local v = stmt.variables[i]
                 local id = self:get_local(v.name) or Die.fatal('unknown variable ' .. repr(v))
@@ -150,9 +177,7 @@ function Bytecode.makeBuilder()
         for _, parameter in ipairs(parameters) do
             self:create_local(parameter)
         end
-        -- allocate space for local variables
-        self:push(Simple.save_stack_pointer)
-        local allocate_locals = Complex.multi_adjust { count = -1 }
+        local allocate_locals = Complex.allocate_locals { count = -1 }
         self:push(allocate_locals)
         self:block(chunk)
         -- if the last instruction doesn't diverge, add an empty return statement

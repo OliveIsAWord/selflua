@@ -45,6 +45,10 @@ section .text
     ret
 %endmacro
 
+op_pop:
+    add rbx, 16
+    ret
+
 %macro PUSH 2
     sub rbx, 16
     ; value
@@ -88,9 +92,17 @@ op_call:
     jmp qword [rcx-16]
     
 %macro OP_BEGIN_FUNCTION 1
+    push rbp
+    mov rbp, rsp
     mov rax, %1 + 1
     mov r8, rcx
     call raw_multi_adjust
+%endmacro
+
+%macro OP_ALLOCATE_LOCALS 1
+    %rep %1
+        OP_PUSH_UNIT NIL
+    %endrep
 %endmacro
 
 op_ret:
@@ -109,6 +121,7 @@ ret_loop:
     jmp ret_loop
 ret_loop_end:
     mov rbx, r8
+    pop rbp
     ret
     
 op_call_end_many:
@@ -116,28 +129,12 @@ op_call_end_many:
     pop rcx
     jmp r11
 
-op_call_end_none:
-    pop r11
-    mov rbx, rcx
-    pop rcx
-    jmp r11
-
-op_call_end_single:
-    pop r11
-    mov rax, 1
+%macro OP_CALL_END_ADJUST 1
+    mov rax, %1
     mov r8, rcx
     pop rcx
-    push r11
-    jmp raw_multi_adjust
-
-%macro OP_MULTI_ADJUST 1
-    mov rax, %1
-    call op_multi_adjust
+    call raw_multi_adjust
 %endmacro
-op_multi_adjust:
-    pop r11
-    pop r8
-    push r11
 raw_multi_adjust:
     shl rax, 4
     neg rax
@@ -281,6 +278,8 @@ print_end:
     mov rbx, rdi
     lea rcx, [string_newline]
     call printf
+    mov rcx, r12
+    mov rbx, r12
     CCONV_RETURN
 
 error:
