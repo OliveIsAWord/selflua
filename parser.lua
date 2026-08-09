@@ -7,6 +7,7 @@ local BetterTypes = require 'better_types'
 Parser.Expr = BetterTypes.Enum 'Expr' {
     Number = { 'value' },
     LiteralNil = {},
+    Table = {},
     Variable = { 'name' },
     UnOp = { 'kind', 'inner' },
     BinOp = { 'kind', 'left', 'right' },
@@ -116,6 +117,9 @@ function Parser.makeParser(tokens_parameter)
                 lhs = Expr.Number { value = number.value }
             elseif self:eat('nil') then
                 lhs = Expr.LiteralNil {}
+            elseif self:eat('{') then
+                self:expect('}')
+                lhs = Expr.Table {}
             elseif self:eat('function') then
                 lhs = self:funcbody()
             else
@@ -272,6 +276,8 @@ function Parser.debugString(tree)
             return repr(tree.value)
         elseif tree:is('LiteralNil') then
             return 'nil'
+        elseif tree:is('Table') then
+            return '{}'
         elseif tree:is('Variable') then
             return tree.name
         elseif tree:is('Call') then

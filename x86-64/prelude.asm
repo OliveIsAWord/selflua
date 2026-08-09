@@ -1,25 +1,28 @@
 ; Register Mapping:
 ; rax - scratch register, clobbered by ops
 ; rbx - data stack pointer
-; rcx - data stack base pointer (points to function object followed by arguments and locals), clobbered by calls
-; rdx - ?
+; rdi - data stack base pointer (points to function object followed by arguments and locals)
 
 bits 64
 default rel
 extern printf
+extern malloc
 extern ExitProcess
 
 %define TAG_FLOAT 2
 %define TAG_NIL 8
 %define TAG_FUNCTION 16
+%define TAG_TABLE 32
 
 section .rodata
     printf_fmt_float: db "%f", 0
     printf_fmt_function: db "function %s %p", 0
     string_nil: db "nil", 0
+    printf_fmt_table: db "table: %p", 0
     string_space: db "/", 10, 0
     string_newline: db 10, 0
     string_error: db "ERROR!", 10, 0
+    string_placeholder: db "(placeholder)", 0
 
 section .bss
 data_stack_boundary:
@@ -33,9 +36,9 @@ section .text
 %macro CCONV_PRELUDE 0
     push rbp
     mov rbp, rsp
-    mov rax, rsp
-    and rax, 15
-    sub rsp, rax
+    mov r12, rsp
+    and r12, 15
+    sub rsp, r12
     sub rsp, 32
 %endmacro
 
@@ -44,6 +47,21 @@ section .text
     pop rbp
     ret
 %endmacro
+
+%assign GC_HEADER_SIZE 16
+; 8 bytes - pointer to next gc header
+; 8 bytes - allocation size (including header)
+; object data...
+gc_alloc:
+    CCONV_PRELUDE
+    mov rcx, rax
+    add rcx, GC_HEADER_SIZE
+    mov r12, rcx
+    call malloc
+    mov qword [rax], 0
+    mov qword [rax+8], r12
+    add rax, GC_HEADER_SIZE
+    CCONV_RETURN
 
 op_pop:
     add rbx, 16
@@ -76,6 +94,14 @@ op_pop:
     PUSH TAG_FUNCTION, rax
 %endmacro
 
+op_push_table:
+    mov rax, 40
+    call gc_alloc
+    mov qword [rax], 0
+    mov qword [rax+8], 0
+    PUSH TAG_TABLE, rax
+    ret
+
 op_save_stack_pointer:
     pop rax
     push rbx
@@ -84,18 +110,19 @@ op_save_stack_pointer:
 op_call:
     pop r11
     pop rax
-    push rcx
-    mov rcx, rax
+    push rdi
+    mov rdi, rax
     push r11
-    cmp qword [rcx-8], TAG_FUNCTION
+    cmp qword [rdi-8], TAG_FUNCTION
     jne error
-    jmp qword [rcx-16]
+    jmp qword [rdi-16]
     
 %macro OP_BEGIN_FUNCTION 1
     push rbp
     mov rbp, rsp
+    ; sub rsp, 32
     mov rax, %1 + 1
-    mov r8, rcx
+    mov r8, rdi
     call raw_multi_adjust
 %endmacro
 
@@ -108,7 +135,7 @@ op_call:
 op_ret:
     pop rax
     pop rax
-    mov r8, rcx
+    mov r8, rdi
 ret_loop:
     cmp rax, rbx
     je ret_loop_end
@@ -121,18 +148,19 @@ ret_loop:
     jmp ret_loop
 ret_loop_end:
     mov rbx, r8
+    ; mov rsp, rbp
     pop rbp
     ret
     
 op_call_end_many:
     pop r11
-    pop rcx
+    pop rdi
     jmp r11
 
 %macro OP_CALL_END_ADJUST 1
     mov rax, %1
-    mov r8, rcx
-    pop rcx
+    mov r8, rdi
+    pop rdi
     call raw_multi_adjust
 %endmacro
 raw_multi_adjust:
@@ -154,7 +182,7 @@ fill_nils:
     add rax, 2
     shl rax, 4
     neg rax
-    add rax, rcx
+    add rax, rdi
     sub rbx, 16
     mov r8, qword [rax]
     mov qword [rbx], r8
@@ -167,7 +195,7 @@ fill_nils:
     add rax, 2
     shl rax, 4
     neg rax
-    add rax, rcx
+    add rax, rdi
     mov r8, qword [rbx]
     mov qword [rax], r8
     mov r8, qword [rbx+8]
@@ -231,7 +259,7 @@ chunk_%1:
 
 DEFINE_BUILTIN print
     CCONV_PRELUDE
-    mov r12, rcx
+    mov r12, rdi
     ; sub r12, 16
     mov r13, 0
 print_loop:
@@ -251,6 +279,8 @@ print_no_space:
     je print_nil
     cmp al, TAG_FUNCTION
     je print_function
+    cmp al, TAG_TABLE
+    je print_table
     ud2
 print_float:
     lea rcx, qword [printf_fmt_float]
@@ -267,18 +297,24 @@ print_function:
     ; function <name> <address>
     ; A pointer to the name string is stored right behind the function.
     mov r8, qword [r12]
-    mov qword [scratch], r8
-    movq xmm2, qword [scratch]
+    movq xmm2, qword [r12]
+    ; lea rdx, qword [string_placeholder]
+    ; movq xmm1, qword [string_placeholder]
     mov rdx, qword [r8-8]
-    mov qword [scratch], rdx
-    movq xmm1, qword [scratch]
+    movq xmm1, qword [r8-8]
+    call printf
+    jmp print_loop
+print_table:
+    lea rcx, qword [printf_fmt_table]
+    ; table: <address>
+    mov rdx, qword [r12]
+    movq xmm1, qword [r12]
     call printf
     jmp print_loop
 print_end:
-    mov rbx, rdi
     lea rcx, [string_newline]
     call printf
-    mov rcx, r12
+    mov rdi, r12
     mov rbx, r12
     CCONV_RETURN
 
@@ -290,24 +326,23 @@ error:
     call ExitProcess
 
 global main
-extern exit
 main:
     push rbp
     mov rbp, rsp
     sub rsp, 32
     
     mov rbx, data_stack
-    mov rcx, rbx
+    mov rdi, rbx
     OP_PUSH_BUILTIN print
     OP_PUSH_BUILTIN print
     OP_PUSH_BUILTIN print
     finit
     ; execute the main chunk and print its return values
-    push rcx
-    mov rcx, rbx
+    push rdi
+    mov rdi, rbx
     OP_PUSH_FUNCTION 1
     call chunk_1
-    pop rcx
+    pop rdi
     call builtin_print
     xor rax, rax
     mov rsp, rbp

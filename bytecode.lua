@@ -6,6 +6,7 @@ local BetterTypes = require 'better_types'
 
 Bytecode.SimpleOp = BetterTypes.SimpleEnum 'SimpleOp' {
     'pop',
+    'push_table',
     'add', 'sub', 'mul', 'div', 'neg',
     'save_stack_pointer', 'call', 'ret', 'call_end_many',
 }
@@ -50,6 +51,8 @@ function Bytecode.makeBuilder()
             op = Complex.push_float { value = expr.value }
         elseif expr:is('LiteralNil') then
             op = Complex.push_unit { value = 'nil' }
+        elseif expr:is('Table') then
+            op = Simple.push_table
         elseif expr:is('Variable') then
             -- God gives Her most cursed `do` blocks to Her strongest girls.
             repeat
